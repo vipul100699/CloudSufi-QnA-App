@@ -20,6 +20,30 @@ dependencies = [
 ]
 
 [tool.uv]
-# uv automatically creates and manages .venv — no manual activation needed.
-# `uv run` resolves the venv, installs dependencies, and executes the command.
-dev-dependencies = []
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",   # coverage reporting
+    "pytest-mock>=3.14.0", # cleaner mock syntax (optional but recommended)
+]
+
+[tool.pytest.ini_options]
+testpaths     = ["tests"]
+# --cov targets only service logic + config. main.py is excluded:
+# Streamlit UI code requires browser automation (Playwright), not pytest.
+addopts       = """
+  --cov=services
+  --cov=config
+  --cov-report=term-missing
+  --cov-report=html:htmlcov
+  --cov-fail-under=80
+"""
+
+[tool.coverage.run]
+omit = ["main.py", "tests/*", "vectorstore/*", "conftest.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
