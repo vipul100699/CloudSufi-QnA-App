@@ -45,7 +45,7 @@ streamlit run main.py
 ## Run Tests
 
 uv run pytest          # full suite with coverage report
-uv run pytest -v       # verbose output  (I got a test coverage of 98.84%)
+uv run pytest -v       # verbose output 
 
 
 
@@ -180,27 +180,6 @@ for token-by-token display. Eliminates the perceived latency gap.
 3. OCR support for scanned PDFs — Integrate pytesseract or pdfplumber
 as a fallback when PyMuPDF detects no text layer. Expands supported
 document types significantly.
-
-4. Replace pickle with SQLite — pickle is not safe for concurrent
-access. Replacing it with SQLite (via SQLAlchemy) would support multi-user
-deployments and eliminate the single-file bottleneck.
-
-5. HyDE (Hypothetical Document Embeddings) — Generate a hypothetical
-answer to the query, embed it, and use that embedding for retrieval instead
-of the raw query. Improves recall for questions phrased differently from
-how the answer is written in the document.
-
-6. Persistent BM25 index — Serialise the BM25 index to disk at ingestion
-time and load it at retrieval time, removing the rebuild overhead at scale.
-
-7. Per-user session isolation — Use Streamlit's session state with a
-per-session vectorstore path, enabling multiple concurrent users without
-index collision.
-
-8. FastAPI backend — The services layer is already fully decoupled from
-Streamlit. Replacing main.py with a FastAPI app would make the system
-deployable as a REST API with zero changes to any service file.
-
 
 
 
