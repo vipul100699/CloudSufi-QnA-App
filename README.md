@@ -11,46 +11,58 @@ Upload 1–3 PDF documents and ask natural language questions. Every answer incl
 ## Quickstart
 
 ### Prerequisites
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — install with:
+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — fast Python
+  package manager (replaces pip + venv):
   ```bash
+  # macOS / Linux
   curl -LsSf https://astral.sh/uv/install.sh | sh
 
+  # Windows (PowerShell)
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
----
+
+## Setup and Run (Single Command)
+
+# 1. Clone the repository
+git clone https://github.com/vipul100699/CloudSufi-QnA-App.git
+cd CloudSufi-QnA-App
+
+# 2. Configure your API key
+cp .env.example .env
+# Open .env and set: GROQ_API_KEY=your_key_here
+
+# 3. Run (single command — uv handles venv + dependency install automatically)
+uv run streamlit run main.py
+
+Then, Open http://localhost:8501 in your browser.
+
+# Alternative:
+pip install -r requirements.txt
+streamlit run main.py
+
 
 ## Architecture
 
 User Query
     │
     ▼
-Streamlit UI (app.py)
+main.py  (Streamlit UI — fully decoupled from business logic)
     │
-    ├─► ingestion_service.py
+    ├─► services/ingestion_service.py
     │       PyMuPDF font metadata extraction
-    │       ↓ Structure-Aware Section Detection (Parent Chunks)
-    │       ↓ RecursiveCharacterTextSplitter (Child Chunks)
-    │       ↓ HuggingFace Embeddings (all-MiniLM-L6-v2)
-    │       ↓ ChromaDB (child vectors) + Pickle Store (parent docs)
+    │       ↓ Structure-Aware Section Detection  → Parent Chunks (1 per section)
+    │       ↓ RecursiveCharacterTextSplitter     → Child Chunks (300 tokens)
+    │       ↓ HuggingFace Embeddings (all-MiniLM-L6-v2, local)
+    │       ↓ ChromaDB (child vectors, persistent) + pickle (parent docs)
     │
-    ├─► retrieval_service.py
-    │       Query → Embed → ChromaDB similarity search (child chunks)
-    │       → parent_id lookup → fetch parent section (rich context)
-    │       → deduplicate → return context list with citation metadata
+    ├─► services/retrieval_service.py
+    │       Query → Embed → ChromaDB similarity_search (child chunks, Top-K=6)
+    │       → parent_id lookup → fetch full parent section (rich context)
+    │       → deduplicate by parent_id → return contexts with citation metadata
     │
-    └─► generation_service.py
-            Numbered context blocks + citation instructions → Groq LLM
-            (llama-3.3-70b-versatile) → Answer with inline [N] citations
-
-
-## Quickstart
-
-### 1. Clone and set up environment
-
-```bash
-git clone https://github.com/vipul100699/CloudSufi-QnA-App.git
-cd CloudSufi_QnA_App
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
+    └─► services/generation_service.py
+            Prompt (services/prompts.py)
+            + Numbered context blocks → Groq LLM (llama-3.3-70b-versatile)
+            → Grounded answer with inline [N] citations + Sources Used section

@@ -23,7 +23,8 @@ from services.generation_service import generate_answer
 
 
 # ── Page Config ───────────────────────────────────────────────────────────────
-# MUST be the first Streamlit call — raises StreamlitAPIException if called later.
+# MUST be the first Streamlit call in the script.
+# Streamlit raises StreamlitAPIException if any other st.* call precedes it.
 st.set_page_config(
     page_title="CloudSufi | Document Q&A",
     page_icon="📄",
@@ -33,8 +34,8 @@ st.set_page_config(
 
 
 # ── Startup Validation ────────────────────────────────────────────────────────
-# Validate GROQ_API_KEY before rendering the UI so the user sees a clear,
-# actionable error rather than a cryptic API exception mid-request.
+# Validate GROQ_API_KEY before rendering any UI so the user sees a clear,
+# actionable error instead of a cryptic API exception buried mid-request.
 if not config.GROQ_API_KEY:
     st.error(
         "⚠️ **GROQ_API_KEY is not set.** "
@@ -48,7 +49,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 if "docs_processed" not in st.session_state:
-    # Auto-detect persisted vectorstore on app restart so users don't
+    # Auto-detect a persisted vectorstore on app restart so users don't
     # need to re-upload documents after a page refresh.
     st.session_state.docs_processed = vectorstore_exists()
 
@@ -106,7 +107,7 @@ with st.sidebar:
                 st.success("✅ Documents indexed successfully!")
 
             except ValueError as ve:
-                # Raised by ingest_pdfs for scanned/unreadable PDFs
+                # Raised by ingest_pdfs when PDFs contain no extractable text
                 st.error(f"❌ {str(ve)}")
                 st.session_state.docs_processed = False
             except Exception as e:
@@ -120,7 +121,7 @@ with st.sidebar:
         for fname in st.session_state.processed_filenames:
             st.markdown(f"- `{fname}`")
 
-    # Stack info panel — useful for evaluators reviewing the submission
+    # Stack info panel — helpful for evaluators reviewing the submission
     st.divider()
     st.markdown("**⚙️ Stack**")
     st.caption(f"🤖 LLM: `{config.LLM_MODEL}`")
@@ -145,7 +146,7 @@ st.markdown(
 )
 st.divider()
 
-# Gate chat interface until documents are indexed
+# Gate the chat interface until at least one document set has been indexed
 if not st.session_state.docs_processed:
     st.info(
         "👈 **Get started:** Upload 1–3 PDF documents in the sidebar "
@@ -169,14 +170,14 @@ for message in st.session_state.chat_history:
             with st.expander("📚 View Retrieved Context", expanded=False):
                 st.code(message["context_used"], language="markdown")
 
-# Chat input widget — Streamlit renders this at the bottom automatically
+# Chat input — Streamlit pins this widget to the bottom of the page automatically
 user_query = st.chat_input(
     placeholder="e.g. What are the key responsibilities of the AI/ML Engineer role?",
     disabled=not st.session_state.docs_processed
 )
 
 if user_query:
-    # Append and render user message immediately for responsive feel
+    # Render user message immediately for a responsive feel
     with st.chat_message("user"):
         st.markdown(user_query)
     st.session_state.chat_history.append({
