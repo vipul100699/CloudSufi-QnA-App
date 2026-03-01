@@ -31,7 +31,7 @@ cd CloudSufi-QnA-App
 
 ### 2. Configure your API key
 cp .env.example .env
-# Open .env and set: GROQ_API_KEY=your_key_here
+Open .env and set: GROQ_API_KEY=your_key_here
 
 ### 3. Run (single command — uv handles venv + dependency install automatically)
 uv run streamlit run main.py
@@ -49,7 +49,7 @@ uv run pytest -v       # verbose output  (I got a test coverage of 98.84%)
 
 
 
-## Approach & Architecture
+## Approach
 
 ### The Core Problem with Naive Chunking
 Fixed-size overlap chunking (the default RAG approach) has two failure modes
@@ -95,6 +95,7 @@ The ensemble retrieves child chunks (high precision), then each child's
 parent_id is resolved to its full parent section (rich context). Results
 are deduplicated by parent_id so the same section never appears twice.
 
+## Architecture
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                        USER (Browser)                           │
