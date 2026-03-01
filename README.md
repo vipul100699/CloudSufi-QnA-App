@@ -42,30 +42,171 @@ Then, Open http://localhost:8501 in your browser.
 pip install -r requirements.txt
 streamlit run main.py
 
+## Run Tests
 
-## Architecture
+uv run pytest          # full suite with coverage report
+uv run pytest -v       # verbose output  (I got a test coverage of 98.84%)
 
-User Query
-    │
-    ▼
-main.py  (Streamlit UI — fully decoupled from business logic)
-    │
-    ├─► services/ingestion_service.py
-    │       PyMuPDF font metadata extraction
-    │       ↓ Structure-Aware Section Detection  → Parent Chunks (1 per section)
-    │       ↓ Drop-cap filter (is_meaningful ≥ 3 chars) prevents magazine PDF noise
-    │       ↓ RecursiveCharacterTextSplitter     → Child Chunks (300 chars)
-    │       ↓ HuggingFace Embeddings (all-MiniLM-L6-v2, local, lazy-loaded)
-    │       ↓ ChromaDB (child vectors, persistent) + pickle (parent_map + child_docs)
-    │
-    ├─► services/retrieval_service.py
-    │       Query → Hybrid BM25 (40%) + Dense Vector (60%) EnsembleRetriever
-    │       → Top-K=10 child chunks via Reciprocal Rank Fusion
-    │       → parent_id lookup → fetch full parent section (rich context)
-    │       → deduplicate by parent_id → return contexts with citation metadata
-    │
-    └─► services/generation_service.py
-            Prompt (services/prompts.py) — includes partial-answer awareness
-            + Numbered context blocks → Groq LLM (llama-3.3-70b-versatile)
-            → Grounded answer with inline [N] citations + Sources Used section
+
+
+## Approach & Architecture
+
+### The Core Problem with Naive Chunking
+Fixed-size overlap chunking (the default RAG approach) has two failure modes
+that directly affect this use case:
+
+Structure blindness — splits mid-sentence across section boundaries,
+producing incoherent embeddings that retrieve the wrong context.
+
+Keyword miss — pure vector search fails on keyword-precise queries
+(e.g., "PyTorch, Scikit-learn") because specific proper nouns have low
+weight in semantic embedding space, while semantically similar but lexically
+irrelevant chunks (e.g., "MLOps experience") rank higher.
+
+Both are solved by the two-layer strategy below.
+
+
+### Layer 1 — Structure-Aware Hierarchical Chunking
+Problem: How do you know where a "section" starts and ends in a PDF?
+
+Solution: PyMuPDF exposes per-span font metadata (size, bold flag). The
+ingestion pipeline computes the median body font size across all text spans,
+then classifies any line above median × 1.2 as a section heading. This
+multiplier-based threshold generalises across PDFs with different base font
+sizes rather than using a hardcoded value.
+
+Each detected heading starts a new Parent Chunk — one Document object
+per section. Parent chunks are then split into smaller Child Chunks
+(300 chars, 40 char overlap) for embedding. Every child stores its parent's
+UUID in metadata, enabling the retrieval step to "look up" the full section.
+
+### Layer 2 — Hybrid BM25 + Dense Vector Retrieval (Small-to-Big)
+At query time, a BM25Retriever (exact keyword match) and a ChromaDB dense
+retriever (semantic similarity) are combined into an EnsembleRetriever via
+Reciprocal Rank Fusion (RRF) with weights 40% BM25 / 60% Dense.
+
+BM25 catches keyword-precise queries: "PyTorch", "LangGraph"
+
+Dense catches semantic queries: "what does making data dance mean?"
+
+RRF merges both ranked lists into a single ranked result
+
+The ensemble retrieves child chunks (high precision), then each child's
+parent_id is resolved to its full parent section (rich context). Results
+are deduplicated by parent_id so the same section never appears twice.
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                        USER (Browser)                           │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │  HTTP
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   main.py  (Streamlit UI)                       │
+│   File upload ──► Process  │  Chat input ──► Answer display     │
+└──────────┬─────────────────┼────────────────────────────────────┘
+           │                 │
+    INGEST PATH         QUERY PATH
+           │                 │
+           ▼                 ▼
+┌──────────────────┐  ┌──────────────────────────────────────────┐
+│ingestion_service │  │          retrieval_service               │
+│                  │  │                                          │
+│ PyMuPDF          │  │  BM25Retriever  +  ChromaDB dense        │
+│  font metadata   │  │       40%       +       60%              │
+│       ↓          │  │           EnsembleRetriever              │
+│ Parent Chunks    │  │            (RRF fusion)                  │
+│  (1/section)     │  │                 ↓                        │
+│       ↓          │  │     Top-K=10 child chunks                │
+│ Child Chunks     │  │                 ↓                        │
+│  (300 chars)     │  │  parent_id → full parent section         │
+│       ↓          │  │                 ↓                        │
+│ Embeddings ──────┼──┤  Deduplicate → context list             │
+│ (MiniLM, local)  │  └────────────────┬─────────────────────────┘
+│       ↓          │                   │
+│  ChromaDB ───────┘                   ▼
+│  (child vecs)    │  ┌──────────────────────────────────────────┐
+│  pickle ─────────┘  │         generation_service               │
+│  (parent_map        │                                          │
+│   + child_docs)     │  System prompt (prompts.py)              │
+└──────────────────┘  │  + Numbered context blocks..     │[1][2]
+                       │  + User query                            │
+                       │          ↓                               │
+                       │  Groq LLaMA 3.3 70B                      │
+                       │          ↓                               │
+                       │  Answer + inline [N] citations           │
+                       │  + Sources Used footer                   │
+                       └──────────────────────────────────────────┘
+
+
+
+## Known Limitations
+
+1. Scanned / image-only PDFs are not supported. The heading detection
+pipeline relies on PyMuPDF font metadata, which only exists in
+text-layer PDFs. Scanned documents would require OCR (e.g., pytesseract)
+as a pre-processing step.
+
+2. Re-uploading clears the previous index. The vectorstore is a single
+shared directory. Uploading new documents wipes the existing index.
+There is no per-session or per-user isolation.
+
+3. BM25 index is rebuilt on every query. BM25 is a stateless index that
+cannot be persisted to disk like ChromaDB. It is reconstructed from the
+pickle store at each retrieval call. At 1–3 PDF scale (~50 child chunks)
+this takes <10ms. At 100+ document scale this becomes a bottleneck.
+
+4. No streaming responses. The full LLM response is generated before
+being displayed. Long answers have a visible delay (~2–4s on Groq free tier).
+
+5. Chat history is session-scoped. Page refresh loses the conversation.
+There is no persistent conversation storage.
+
+6. Max 3 PDFs per session is enforced in the UI but not in the ingestion
+service directly. The service itself has no hard cap — the UI limit is a
+guardrail for this assignment scope.
+
+7. General-purpose embeddings. all-MiniLM-L6-v2 is not fine-tuned for
+domain-specific vocabulary (e.g., medical, legal, financial). Retrieval
+quality may degrade for highly specialised documents.
+
+
+## Improvements with More Time
+
+In order of impact:
+
+1. Cross-encoder reranker — Add a cross-encoder/ms-marco-MiniLM-L-6-v2
+reranker after the ensemble retriever to re-score the top-K results with
+full query-passage attention. Highest single improvement for retrieval
+precision at 50+ document scale.
+
+2. Streaming LLM responses — Use llm.stream() with st.write_stream()
+for token-by-token display. Eliminates the perceived latency gap.
+
+3. OCR support for scanned PDFs — Integrate pytesseract or pdfplumber
+as a fallback when PyMuPDF detects no text layer. Expands supported
+document types significantly.
+
+4. Replace pickle with SQLite — pickle is not safe for concurrent
+access. Replacing it with SQLite (via SQLAlchemy) would support multi-user
+deployments and eliminate the single-file bottleneck.
+
+5. HyDE (Hypothetical Document Embeddings) — Generate a hypothetical
+answer to the query, embed it, and use that embedding for retrieval instead
+of the raw query. Improves recall for questions phrased differently from
+how the answer is written in the document.
+
+6. Persistent BM25 index — Serialise the BM25 index to disk at ingestion
+time and load it at retrieval time, removing the rebuild overhead at scale.
+
+7. Per-user session isolation — Use Streamlit's session state with a
+per-session vectorstore path, enabling multiple concurrent users without
+index collision.
+
+8. FastAPI backend — The services layer is already fully decoupled from
+Streamlit. Replacing main.py with a FastAPI app would make the system
+deployable as a REST API with zero changes to any service file.
+
+
+
 
