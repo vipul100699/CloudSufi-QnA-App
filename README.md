@@ -97,47 +97,40 @@ are deduplicated by parent_id so the same section never appears twice.
 
 ## Architecture
 
-┌─────────────────────────────────────────────────────────────────┐
-│                        USER (Browser)                           │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │  HTTP
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   main.py  (Streamlit UI)                       │
-│   File upload ──► Process  │  Chat input ──► Answer display     │
-└──────────┬─────────────────┼────────────────────────────────────┘
-           │                 │
-    INGEST PATH         QUERY PATH
-           │                 │
-           ▼                 ▼
-┌──────────────────┐  ┌──────────────────────────────────────────┐
-│ingestion_service │  │          retrieval_service               │
-│                  │  │                                          │
-│ PyMuPDF          │  │  BM25Retriever  +  ChromaDB dense        │
-│  font metadata   │  │       40%       +       60%              │
-│       ↓          │  │           EnsembleRetriever              │
-│ Parent Chunks    │  │            (RRF fusion)                  │
-│  (1/section)     │  │                 ↓                        │
-│       ↓          │  │     Top-K=10 child chunks                │
-│ Child Chunks     │  │                 ↓                        │
-│  (300 chars)     │  │  parent_id → full parent section         │
-│       ↓          │  │                 ↓                        │
-│ Embeddings ──────┼──┤  Deduplicate → context list             │
-│ (MiniLM, local)  │  └────────────────┬─────────────────────────┘
-│       ↓          │                   │
-│  ChromaDB ───────┘                   ▼
-│  (child vecs)    │  ┌──────────────────────────────────────────┐
-│  pickle ─────────┘  │         generation_service               │
-│  (parent_map        │                                          │
-│   + child_docs)     │  System prompt (prompts.py)              │
-└──────────────────┘  │  + Numbered context blocks..     │[1][2]
-                       │  + User query                            │
-                       │          ↓                               │
-                       │  Groq LLaMA 3.3 70B                      │
-                       │          ↓                               │
-                       │  Answer + inline [N] citations           │
-                       │  + Sources Used footer                   │
-                       └──────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    User(["👤 User"])
+
+    User -- "Upload PDFs" --> Ingest
+    User -- "Ask question" --> Retrieve
+
+    subgraph Ingest["📥 Ingestion  —  ingestion_service.py"]
+        direction TB
+        A["PyMuPDF\nParse PDF + detect headings\nvia font size metadata"]
+        B["Parent Chunks\n1 per section"]
+        C["Child Chunks\n300 chars each"]
+        D["Embed + Store\nall-MiniLM-L6-v2  →  ChromaDB\nparent sections  →  pickle"]
+        A --> B --> C --> D
+    end
+
+    subgraph Retrieve["🔍 Retrieval  —  retrieval_service.py"]
+        direction TB
+        E["Hybrid Search\nBM25 40%  +  Dense 60%\nEnsembleRetriever / RRF"]
+        F["Resolve parent_id\nfetch full section context"]
+        E --> F
+    end
+
+    subgraph Generate["⚙️ Generation  —  generation_service.py"]
+        direction TB
+        G["Groq  —  LLaMA 3.3 70B\ngrounded · temp = 0.1"]
+        H["Answer + inline citations\n+ Sources Used footer"]
+        G --> H
+    end
+
+    D -- "vectors + sections" --> E
+    F -- "context list" --> G
+    H -- "response" --> User
+```
 
 
 
