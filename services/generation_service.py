@@ -2,10 +2,10 @@
 Generation layer: prompt construction, LLM invocation, and citation formatting.
 
 Design decisions:
-  - System prompt enforces strict grounding: LLM must ONLY use provided context.
-  - Context blocks are numbered [1], [2], etc. and each includes citation metadata.
-  - LLM is instructed to cite inline using [N] notation after each claim.
-  - A "Sources" section is appended to every answer for easy reference.
+  - System prompt is imported from services/prompts.py — single source of truth.
+  - Context blocks are numbered [1], [2], etc., each labelled with citation metadata.
+  - LLM is instructed to cite inline using [N] notation immediately after each claim.
+  - GROQ_API_KEY is passed explicitly from config — no hidden os.environ reads.
   - Temperature=0.1 ensures deterministic, factual responses (not creative generation).
 """
 
@@ -15,24 +15,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
 import config
-
-
-# ── System Prompt ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are a precise, grounded document assistant for CloudSufi.
-
-Your task is to answer questions using ONLY the numbered document excerpts provided below.
-
-Instructions:
-1. Cite every factual claim inline using [N] immediately after the sentence, 
-   where N is the number of the source excerpt.
-2. If the answer draws from multiple sources, cite all relevant ones: e.g., [1][3].
-3. If the provided excerpts do not contain sufficient information to answer the question,
-   respond exactly with: "The provided documents do not contain enough information to answer this question."
-4. Do NOT use any knowledge from outside the provided excerpts.
-5. Structure your answer clearly. Use bullet points for lists or comparisons.
-6. After your main answer, include a "**Sources Used:**" section listing each citation:
-   [N] <filename> | Section: <section> | Page: <page>
-"""
+from services.prompts import DOCUMENT_QA_SYSTEM_PROMPT
 
 
 def _format_context_blocks(contexts: List[Dict[str, str]]) -> str:
@@ -62,8 +45,8 @@ def generate_answer(query: str, contexts: List[Dict[str, str]]) -> Dict[str, str
 
     Returns:
         Dict with:
-          answer      : LLM response string with inline citations.
-          context_used: Formatted context block (shown as expandable in UI).
+          answer      : LLM response string with inline [N] citations.
+          context_used: Formatted context block (rendered as expandable in UI).
     """
     if not contexts:
         return {
@@ -80,15 +63,15 @@ def generate_answer(query: str, contexts: List[Dict[str, str]]) -> Dict[str, str
         f"Question: {query}"
     )
 
-    # GROQ_API_KEY is auto-read from environment (loaded via dotenv in config.py)
     llm = ChatGroq(
         model=config.LLM_MODEL,
         temperature=config.LLM_TEMPERATURE,
-        max_tokens=config.LLM_MAX_TOKENS
+        max_tokens=config.LLM_MAX_TOKENS,
+        api_key=config.GROQ_API_KEY  # Explicitly sourced from config, not os.environ
     )
 
     response = llm.invoke([
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=DOCUMENT_QA_SYSTEM_PROMPT),
         HumanMessage(content=human_content)
     ])
 

@@ -3,8 +3,19 @@
 A RAG-based document question-answering system built as a take-home assignment
 for the Senior AI/ML Engineer role at CloudSufi.
 
-Ask natural language questions across 1–3 PDF documents and receive grounded answers
-with precise inline citations (document, section, and page number).
+Upload 1–3 PDF documents and ask natural language questions. Every answer includes
+**inline citations** with the exact document name, section heading, and page number.
+
+---
+
+## Quickstart
+
+### Prerequisites
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) — install with:
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
 
 ---
 
