@@ -63,4 +63,10 @@ CHILD_CHUNK_OVERLAP: int = 40
 # Top-K child chunks retrieved; deduplication reduces these to unique parent sections.
 # Scaling path: increase TOP_K_CHILDREN to 50 and add a cross-encoder reranker
 # (e.g., cross-encoder/ms-marco-MiniLM-L-6-v2) at 500+ document scale.
-TOP_K_CHILDREN: int = 6
+TOP_K_CHILDREN: int = 10
+
+# Hybrid retrieval weights for BM25 + dense vector EnsembleRetriever.
+# BM25 handles keyword-precise queries; dense handles semantic queries.
+# Scaling path: tune based on query distribution in production.
+BM25_WEIGHT: float = 0.4
+

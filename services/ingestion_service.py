@@ -75,7 +75,12 @@ def _classify_line_as_heading(line_text: str, dominant_span: dict, threshold: fl
     is_large_font = dominant_span["size"] >= threshold
     is_bold = bool(dominant_span["flags"] & 16)
     is_short = len(line_text) <= config.HEADING_MAX_CHARS
-    return (is_large_font or is_bold) and is_short
+
+    # NEW: Reject single-character lines — these are decorative drop caps,
+    # not section headings. A heading must be at least 3 characters.
+    is_meaningful = len(line_text.strip()) >= 3
+
+    return (is_large_font or is_bold) and is_short and is_meaningful
 
 
 # ── Section Extraction ────────────────────────────────────────────────────────
@@ -222,8 +227,10 @@ def ingest_pdfs(pdf_paths: List[str]) -> None:
     parent_map: Dict[str, Document] = {
         doc.metadata["parent_id"]: doc for doc in all_parents
     }
+    # child_docs are persisted alongside parent_map so the BM25 index can be
+    # reconstructed at retrieval time without re-parsing the PDFs.
     with open(config.PARENT_STORE_PATH, "wb") as f:
-        pickle.dump(parent_map, f)
+        pickle.dump({"parent_map": parent_map, "child_docs": child_docs}, f)
 
 
 # ── Utility Functions ─────────────────────────────────────────────────────────

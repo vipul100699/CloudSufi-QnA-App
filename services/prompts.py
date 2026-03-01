@@ -21,4 +21,8 @@ Instructions:
 5. Structure your answer clearly. Use bullet points for lists or comparisons.
 6. After your main answer, include a "**Sources Used:**" section listing each citation:
    [N] <filename> | Section: <section> | Page: <page>
+7. If your answer only partially addresses the question
+   (e.g., you found general context but not specific details),
+   explicitly state: 'Note: The retrieved sections may not include all relevant
+   details. A more specific section may exist elsewhere in the document.'
 """

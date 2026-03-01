@@ -15,16 +15,16 @@ import os
 import tempfile
 
 import streamlit as st
-
 import config
-from services.ingestion_service import ingest_pdfs, vectorstore_exists, clear_vectorstore
-from services.retrieval_service import retrieve_context
-from services.generation_service import generate_answer
 
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 # MUST be the first Streamlit call in the script.
 # Streamlit raises StreamlitAPIException if any other st.* call precedes it.
+# NOTE: Service imports (ingestion, retrieval, generation) are intentionally
+# deferred to inside functions below. Top-level service imports trigger
+# sentence-transformers + PyTorch loading BEFORE this line executes,
+# causing a blank white screen for 5-15s on startup.
 st.set_page_config(
     page_title="CloudSufi | Document Q&A",
     page_icon="📄",
@@ -34,8 +34,6 @@ st.set_page_config(
 
 
 # ── Startup Validation ────────────────────────────────────────────────────────
-# Validate GROQ_API_KEY before rendering any UI so the user sees a clear,
-# actionable error instead of a cryptic API exception buried mid-request.
 if not config.GROQ_API_KEY:
     st.error(
         "⚠️ **GROQ_API_KEY is not set.** "
@@ -49,8 +47,9 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 if "docs_processed" not in st.session_state:
-    # Auto-detect a persisted vectorstore on app restart so users don't
-    # need to re-upload documents after a page refresh.
+    # Deferred import: vectorstore_exists() only reads the filesystem — it does
+    # not trigger model loading. Safe to call early.
+    from services.ingestion_service import vectorstore_exists
     st.session_state.docs_processed = vectorstore_exists()
 
 if "processed_filenames" not in st.session_state:
@@ -73,7 +72,6 @@ with st.sidebar:
         help="Upload between 1 and 3 PDF documents."
     )
 
-    # Silently cap at 3 with a warning — no hard failure
     if uploaded_files and len(uploaded_files) > 3:
         st.warning("⚠️ Maximum 3 documents supported. Only the first 3 will be used.")
         uploaded_files = uploaded_files[:3]
@@ -86,10 +84,13 @@ with st.sidebar:
     )
 
     if process_clicked and uploaded_files:
+        # Deferred imports: these trigger sentence-transformers + ChromaDB loading.
+        # Importing here (inside the button handler) means they only load when the
+        # user explicitly clicks "Process Documents" — not on every page render.
+        from services.ingestion_service import ingest_pdfs, clear_vectorstore
+
         with st.spinner("🔍 Parsing structure, chunking, and indexing..."):
             try:
-                # Write Streamlit UploadedFile objects to a temp directory
-                # because PyMuPDF requires a real filesystem path, not a BytesIO stream.
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmp_paths = []
                     for f in uploaded_files:
@@ -98,30 +99,27 @@ with st.sidebar:
                             out.write(f.read())
                         tmp_paths.append(tmp_path)
 
-                    clear_vectorstore()     # Wipe previous index before re-ingesting
-                    ingest_pdfs(tmp_paths)  # Structure-aware hierarchical ingestion
+                    clear_vectorstore()
+                    ingest_pdfs(tmp_paths)
 
                 st.session_state.docs_processed = True
                 st.session_state.processed_filenames = [f.name for f in uploaded_files]
-                st.session_state.chat_history = []   # Fresh chat for new document set
+                st.session_state.chat_history = []
                 st.success("✅ Documents indexed successfully!")
 
             except ValueError as ve:
-                # Raised by ingest_pdfs when PDFs contain no extractable text
                 st.error(f"❌ {str(ve)}")
                 st.session_state.docs_processed = False
             except Exception as e:
                 st.error(f"❌ Unexpected error during processing: {str(e)}")
                 st.session_state.docs_processed = False
 
-    # Show currently indexed document names
     if st.session_state.docs_processed and st.session_state.processed_filenames:
         st.divider()
         st.markdown("**📑 Indexed Documents**")
         for fname in st.session_state.processed_filenames:
             st.markdown(f"- `{fname}`")
 
-    # Stack info panel — helpful for evaluators reviewing the submission
     st.divider()
     st.markdown("**⚙️ Stack**")
     st.caption(f"🤖 LLM: `{config.LLM_MODEL}`")
@@ -130,7 +128,6 @@ with st.sidebar:
     st.caption(f"✂️ Chunking: `Structure-Aware + Hierarchical`")
     st.caption(f"🔍 Top-K Children: `{config.TOP_K_CHILDREN}`")
 
-    # Clear chat — only rendered when there is history to clear
     if st.session_state.chat_history:
         st.divider()
         if st.button("🗑️ Clear Chat History", use_container_width=True):
@@ -146,7 +143,6 @@ st.markdown(
 )
 st.divider()
 
-# Gate the chat interface until at least one document set has been indexed
 if not st.session_state.docs_processed:
     st.info(
         "👈 **Get started:** Upload 1–3 PDF documents in the sidebar "
@@ -161,8 +157,6 @@ if not st.session_state.docs_processed:
 
 
 # ── Chat Interface ────────────────────────────────────────────────────────────
-
-# Render full chat history on each rerun (Streamlit re-executes top-to-bottom)
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -170,14 +164,12 @@ for message in st.session_state.chat_history:
             with st.expander("📚 View Retrieved Context", expanded=False):
                 st.code(message["context_used"], language="markdown")
 
-# Chat input — Streamlit pins this widget to the bottom of the page automatically
 user_query = st.chat_input(
     placeholder="e.g. What are the key responsibilities of the AI/ML Engineer role?",
     disabled=not st.session_state.docs_processed
 )
 
 if user_query:
-    # Render user message immediately for a responsive feel
     with st.chat_message("user"):
         st.markdown(user_query)
     st.session_state.chat_history.append({
@@ -185,10 +177,16 @@ if user_query:
         "content": user_query
     })
 
-    # Retrieve → Generate → Render assistant response
     with st.chat_message("assistant"):
         with st.spinner("Searching documents and generating answer..."):
             try:
+                # Deferred imports: retrieval and generation services are only
+                # imported when the user submits a query. By this point,
+                # get_embeddings() has already been warm-started by the
+                # ingestion step, so there is no additional loading delay.
+                from services.retrieval_service import retrieve_context
+                from services.generation_service import generate_answer
+
                 contexts = retrieve_context(user_query)
                 result = generate_answer(user_query, contexts)
 

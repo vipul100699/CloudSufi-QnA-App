@@ -6,8 +6,28 @@ dist/
 wheels/
 *.egg-info
 
+# ── uv ────────────────────────────────────────────────────────────────────────
+# uv.lock is intentionally NOT ignored — commit it for reproducible installs.
+# Only ignore the uv cache directory if it appears locally.
+.uv/
+
 # Virtual environments
 .venv
 
 # Environment variables
 .env
+
+# ── HuggingFace Model Cache ───────────────────────────────────────────────────
+# all-MiniLM-L6-v2 (~80MB) is downloaded to HF_HOME on first run.
+# Never commit model weights to the repository.
+.cache/
+huggingface/
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# ── Vectorstore (Runtime Generated) ──────────────────────────────────────────
+# ChromaDB index and parent pickle store are created at runtime during ingestion.
+# They are machine-specific, potentially large, and must not be versioned.
+vectorstore/
